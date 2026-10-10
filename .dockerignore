@@ -5,3 +5,5 @@
 !shifts.sql
 !seed_shifts.py
 !seed_weekend.py
+!leaderboard
+!leaderboard_worker.py

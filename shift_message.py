@@ -4,6 +4,12 @@ from datetime import datetime, timedelta, timezone
 EDT = timezone(timedelta(hours=-4))
 
 
+def percentage_bar(percent, width=20):
+    percent = max(0, min(100, percent))
+    filled = round(width * percent / 100)
+    return f"{'█' * filled}{'░' * (width - filled)} {percent:.0f}%"
+
+
 def send_shift_report(client, channel_id, report):
     # Average available five-minute polls into ten-minute windows.
     buckets = defaultdict(list)
@@ -21,14 +27,21 @@ def send_shift_report(client, channel_id, report):
         for window, counts in sorted(buckets.items())
     ]
 
-    host_lines = "\n".join(
-        f"• <@{host['user_id']}>: "
-        f"{'observed present' if host['present'] else 'not observed'}"
-        for host in report["hosts"]
-    ) or "No scheduled hosts"
+    host_rows = []
+    for host in report["hosts"]:
+        percent = host.get("attendance_percent")
+        attendance = "No attendance data" if percent is None else f"`{percentage_bar(percent)}`"
+        host_rows.append(f"<@{host['user_id']}>\n{attendance}\n"
+                         f"*Current UPs:* {host.get('current_ups', 'Unavailable')}/300\n"
+                         f"*Leaderboard position:* "
+                         f"{('#' + str(host['leaderboard_position'])) if host.get('leaderboard_position') else 'Not ranked'}")
+    host_lines = "\n\n".join(host_rows) or "No scheduled hosts"
 
+    title = "Shift Summary - " + (", ".join(
+        f"<@{host['user_id']}>" for host in report["hosts"]
+    ) or "No scheduled host")
     summary = (
-        f"*{report['name']}*\n"
+        f"*{title}*\n"
         f"*Huddle observed:* {'Yes' if report['huddle_observed'] else 'No'}\n"
         f"*Host observed:* {'Yes' if report['host_present'] else 'No'}\n"
         f"*Unique participants:* {report['unique_participant_count']}\n"
@@ -78,7 +91,7 @@ def send_shift_report(client, channel_id, report):
     return client.chat_postMessage(
         channel=channel_id,
         text=(
-            f"{report['name']}: "
+            f"{title}: "
             f"{report['unique_participant_count']} unique participants"
         ),
         blocks=blocks,

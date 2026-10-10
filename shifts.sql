@@ -27,6 +27,14 @@ CREATE TABLE IF NOT EXISTS snapshot_slots (
     PRIMARY KEY (snapshot_id, time_slot_id)
 );
 CREATE INDEX IF NOT EXISTS time_slots_window ON time_slots(channel_id, starts_at, ends_at);
+CREATE OR REPLACE VIEW host_participant_polls AS
+    SELECT h.user_id AS host_id, h.time_slot_id AS shift_id,
+           su.user_id AS participant_id, s.poll_started_at
+    FROM shift_hosts h
+    JOIN snapshot_slots ss ON ss.time_slot_id = h.time_slot_id
+    JOIN snapshots s ON s.id = ss.snapshot_id
+    JOIN snapshot_users su ON su.snapshot_id = s.id
+    WHERE h.status = 'scheduled' AND h.user_id = ANY(s.user_ids);
 CREATE OR REPLACE VIEW shift_attendance AS
     SELECT t.id AS time_slot_id, t.name, t.starts_at, t.ends_at,
            h.user_id, h.display_name, h.status,
@@ -35,3 +43,15 @@ CREATE OR REPLACE VIEW shift_attendance AS
     FROM time_slots t JOIN shift_hosts h ON h.time_slot_id = t.id
     JOIN snapshot_slots ss ON ss.time_slot_id = t.id
     JOIN snapshots s ON s.id = ss.snapshot_id;
+
+CREATE OR REPLACE VIEW host_unique_participants AS
+SELECT DISTINCT
+    h.user_id AS host_id,
+    h.time_slot_id AS shift_id,
+    su.user_id AS participant_id
+FROM shift_hosts h
+JOIN snapshot_slots ss ON ss.time_slot_id = h.time_slot_id
+JOIN snapshots s ON s.id = ss.snapshot_id
+JOIN snapshot_users su ON su.snapshot_id = s.id
+WHERE h.status = 'scheduled'
+  AND h.user_id = ANY(s.user_ids);

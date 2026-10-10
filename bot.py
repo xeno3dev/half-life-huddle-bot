@@ -25,7 +25,6 @@ def user_group_members(client, group_id):
     """group_id is Slack's S... ID, not the @handle."""
     return client.usergroups_users_list(usergroup=group_id)["users"]
 
-
 def paginated(client_method, key, **kwargs):
     cursor = None
     while True:
@@ -133,10 +132,28 @@ def on_shift_ended(db, shift):
     hosts = db.execute("""SELECT user_id, display_name FROM shift_hosts
         WHERE time_slot_id = %s AND status = 'scheduled' ORDER BY user_id""",
         (shift["id"],)).fetchall()
-    observed_ids = set(user_ids)
-    host_attendance = [
-        {**host, "present": host["user_id"] in observed_ids} for host in hosts
+    client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
+    groups = client.usergroups_list()["usergroups"]
+    group = next(g for g in groups if g["handle"] == "halflifehosts")
+    standings = [
+        (uid, len(get_host_participants(db, uid, shift["ends_at"])))
+        for uid in user_group_members(client, group["id"])
     ]
+    standings.sort(key=lambda item: item[1], reverse=True)
+    positions = {uid: rank for rank, (uid, _) in enumerate(standings, 1)}
+    host_attendance = []
+    for host in hosts:
+        present_polls = db.execute("""SELECT count(*) AS n
+            FROM snapshot_slots ss JOIN snapshots s ON s.id = ss.snapshot_id
+            WHERE ss.time_slot_id = %s AND %s = ANY(s.user_ids)""",
+            (shift["id"], host["user_id"])).fetchone()["n"]
+        host_attendance.append({
+            **host, "present": present_polls > 0,
+            "current_ups": len(get_host_participants(db, host["user_id"], shift["ends_at"])),
+            "leaderboard_position": positions.get(host["user_id"]),
+            "present_polls": present_polls, "total_polls": len(polls),
+            "attendance_percent": present_polls / len(polls) * 100 if polls else None,
+        })
     report = {
         "shift_id": shift["id"], "name": shift["name"],
         "participant_ids": user_ids, "unique_participant_count": len(user_ids),
@@ -147,10 +164,11 @@ def on_shift_ended(db, shift):
     }
     log.info("Shift ended: id=%s unique_participants=%d polls=%d",
              shift["id"], len(user_ids), len(polls))
+    for host in host_attendance:
+        log.info("Shift UPs: shift=%s host=%s current_ups=%d",
+                 shift["id"], host["user_id"], host["current_ups"])
 
     from shift_message import send_shift_report
-
-    client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
 
     send_shift_report(
         client,
@@ -159,6 +177,16 @@ def on_shift_ended(db, shift):
     )
     return report
 
+def get_host_participants(db, host_id, before=None):
+    rows = db.execute("""
+        SELECT DISTINCT participant_id AS user_id
+        FROM host_participant_polls
+        WHERE host_id = %s
+          AND poll_started_at < COALESCE(%s::timestamptz, NOW())
+        ORDER BY participant_id
+    """, (host_id, before)).fetchall()
+
+    return [row["user_id"] for row in rows]
 
 def process_ended_shift(db, channel_id, callback=None, grace_seconds=15):
     """Process one due shift. Returns False if none are due; retries failures later."""
@@ -306,6 +334,9 @@ def main():
     db = initialize_db(os.environ["DATABASE_URL"])
     tracker = Tracker(client, resolve_channel(client), db, interval)
     stop = threading.Event()
+    from leaderboard_worker import leaderboard_worker
+    leaderboard_thread = threading.Thread(target=leaderboard_worker,
+        args=(stop,), name="leaderboard-worker", daemon=True)
     check_seconds = int(os.getenv("SHIFT_CHECK_SECONDS", "15"))
     grace_seconds = int(os.getenv("SHIFT_GRACE_SECONDS", "15"))
     if check_seconds < 1 or grace_seconds < 0:
@@ -318,6 +349,7 @@ def main():
     socket.connect()
     try:
         worker.start()
+        leaderboard_thread.start()
         tracker.run()
     except KeyboardInterrupt:
         pass

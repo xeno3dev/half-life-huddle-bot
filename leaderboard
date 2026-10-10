@@ -1,0 +1,55 @@
+from bot import user_group_members
+from bot import get_shift_poll_counts, get_shift_participants
+from bot import initialize_db
+from bot import get_host_participants
+
+from slack_sdk import WebClient
+import os
+
+import random
+
+client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
+
+groups = client.usergroups_list()["usergroups"]
+
+def percentage_bar(percent, upn, width=20):
+    filled = round(max(0, min(100, percent)) / 100 * width)
+    return f"{'█' * filled}{'░' * (width - filled)} {upn}/300"
+
+group = next(
+    g for g in groups
+    if g["handle"] == "halflifehosts"
+)
+
+host_ids = user_group_members(client, group["id"])
+
+hosts = []
+
+db = initialize_db(os.environ["DATABASE_URL"])
+
+for user_id in host_ids:
+    participant_ids = get_host_participants(db, user_id)
+    upn = len(participant_ids)
+
+    percent = upn / 300 * 100
+
+    hosts.append({
+        "user_id": user_id,
+        "upn": upn,
+        "percent": percent
+    })
+
+rows = []
+
+hosts.sort(key=lambda host: host["percent"], reverse=True)
+
+for rank, host in enumerate(hosts, start=1):
+    rows.append(
+        f"#{rank} <@{host['user_id']}>\n"
+        f"{percentage_bar(host['percent'], host['upn'])}"
+    )
+
+client.chat_postMessage(
+    channel = os.environ["REPORT_CHANNEL_ID"],
+    text=":trophygds: UPs Leaderboard\n\n" + "\n\n".join(rows),
+)
