@@ -1,0 +1,9 @@
+{
+  "display_information": {"name": "Half-Life Huddle Tracker"},
+  "features": {"bot_user": {"display_name": "Huddle Tracker", "always_online": false}},
+  "oauth_config": {"scopes": {"bot": ["users:read", "channels:read", "channels:history", "groups:read", "groups:history", "usergroups:read"]}},
+  "settings": {
+    "socket_mode_enabled": true,
+    "event_subscriptions": {"bot_events": ["user_huddle_changed", "message.channels", "message.groups"]}
+  }
+}

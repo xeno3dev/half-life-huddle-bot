@@ -1,0 +1,7 @@
+*
+!requirements.txt
+!bot.py
+!shift_message.py
+!shifts.sql
+!seed_shifts.py
+!seed_weekend.py
